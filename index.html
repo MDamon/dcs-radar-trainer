@@ -302,6 +302,8 @@ const cover=()=>{const h=(radar.bars-1)/2*BARSP+BEAM/2;return [radar.elC-h,radar
 const frameT=()=>radar.bars*radar.azW/RATE;
 const dropT=()=>Math.max(12,2.5*frameT());
 const alive=t=>t.trk&&time-t.lastHit<dropT();
+function established(t){return !!alive(t)&&t.hits>=2}
+function rankTracks(){const e=targets.filter(t=>established(t)).sort((a,b)=>a.g.r-b.g.r);for(const t of targets)t.rank=0;e.forEach((t,i)=>t.rank=i+1)}
 function inAcm(g){
   if(g.r>10) return false;
   const v=AC.acm[radar.acm];
@@ -312,7 +314,7 @@ function lastBrick(t){for(let i=bricks.length-1;i>=0;i--)if(bricks[i].id===t.id)
 function dispPos(t){
   if(radar.stt===t) return t.g;
   if(!alive(t)) return null;
-  if(radar.mode==='TWS') return trkGeom(t);
+  if(established(t)&&(radar.mode==='TWS'||AC.id==='hornet')) return trkGeom(t);
   return lastBrick(t);
 }
 function pick(){
@@ -327,6 +329,7 @@ function flash(msg){$('flash').innerHTML='<b>'+msg+'</b>';clearTimeout(flashTime
 
 function hit(t){
   const h=t.hdg*D2R;
+  t.hits=time-t.lastHit<dropT()?(t.hits||0)+1:1;
   t.lastHit=time; t.trk={x:t.x,y:t.y,vx:Math.sin(h)*t.spd,vy:Math.cos(h)*t.spd,alt:t.alt,spd:t.spd,hdg:t.hdg,t:time};
 }
 function lock(t,how){radar.stt=t;radar.lns=t;radar.mem=0;bricks=[];hit(t);flags.locked=true;if(how)flags.acmLock=true;flash(how?AC.acm[how].label+' auto-acquired a target into STT':'STT: single target track')}
@@ -335,6 +338,7 @@ function breakLock(msg){radar.stt=null;radar.lns=null;radar.mem=0;flash(msg)}
 function depress(){
   if(radar.stt||radar.acm) return;
   const t=pick();
+  if(t&&AC.id==='hornet'&&!established(t)){flash('No trackfile yet. The radar needs a second hit on a contact before you can designate it.');return}
   if(t){ if(radar.lns===t) lock(t); else {radar.lns=t;flash(AC.t.set)} }
   else if(!AC.follow&&radar.azW<AZS[AZS.length-1]){radar.center=cursor.az;flash('Scan centre moved to '+Math.round(cursor.az)+'°')}
   else flash('Nothing under the cursor. Put the two short bars on a contact, then click or press Enter.');
@@ -425,11 +429,11 @@ function hafu(c,x,y,t,star){
   if(t.iff==='friendly') c.arc(x,y,9,Math.PI,0);
   else {c.moveTo(x-8,y);c.lineTo(x-8,y-9);c.lineTo(x+8,y-9);c.lineTo(x+8,y)}
   c.stroke();
-  const a=(t.trk.hdg-own.hdg)*D2R; c.beginPath();c.moveTo(x,y-4);c.lineTo(x+Math.sin(a)*20,y-4-Math.cos(a)*20);c.stroke();
+  const a=(t.trk.hdg-own.hdg)*D2R; c.beginPath();c.moveTo(x+Math.sin(a)*11,y-4-Math.cos(a)*11);c.lineTo(x+Math.sin(a)*27,y-4-Math.cos(a)*27);c.stroke();
   if(star){c.beginPath();for(let i=0;i<10;i++){const r=i%2?2.5:6,q=i*Math.PI/5;c[i?'lineTo':'moveTo'](x+Math.sin(q)*r,y-4-Math.cos(q)*r)}c.closePath();c.fillStyle=C.crt;c.fill()}
-  else {c.fillStyle=C.crt;c.fillRect(x-1.5,y-5.5,3,3)}
+  else if(t.rank) txt(c,String(t.rank),x,y-3,{a:'center',s:10});
 }
-function tags(c,x,y,t){txt(c,String(Math.round(t.trk.alt/1000)),x-14,y-4,{a:'right',s:12});txt(c,(t.trk.spd/600).toFixed(1),x+14,y-4,{s:12})}
+function tags(c,x,y,t){txt(c,(t.trk.spd/600).toFixed(1),x-14,y-4,{a:'right',s:12});txt(c,String(Math.round(t.trk.alt/1000)),x+14,y-4,{s:12})}
 function drawHornet(){
   const c=ddi; c.clearRect(0,0,520,520);
   c.strokeStyle=C.crt;c.lineWidth=1.2;c.strokeRect(SX0,SY0,SW,SW);
@@ -459,12 +463,13 @@ function drawHornet(){
       c.beginPath();c.moveTo(SX1-2,y);c.lineTo(SX1-12,y-5);c.lineTo(SX1-12,y+5);c.closePath();c.fillStyle=C.crt;c.fill();
       txt(c,Math.round(g.vc)+' Vc',SX1-18,y,{a:'right',s:12});
       if(radar.mem>0) txt(c,'MEM',260,SY0+34,{a:'center',s:14,b:1});
-    }else if(radar.mode==='RWS'){
+    }else{
+      // raw hits, then a HAFU over every established trackfile (RWS and TWS alike)
       for(const b of bricks){ if(b.r>radar.rng)continue; c.globalAlpha=clamp(1-(time-b.t)/8,.12,1);c.fillStyle=C.crt;c.fillRect(ax(b.az)-6,ry(b.r)-3,12,6)}
       c.globalAlpha=1;
-      for(const t of targets){ if(t!==radar.lns&&t!==hoverT)continue; const p=dispPos(t); if(!p||p.r>radar.rng)continue; const x=ax(p.az),y=ry(p.r); hafu(c,x,y,t,t===radar.lns); tags(c,x,y,t)}
-    }else{
-      for(const t of targets){const p=dispPos(t); if(!p||p.r>radar.rng)continue; const x=ax(p.az),y=ry(p.r); hafu(c,x,y,t,t===radar.lns); if(t===radar.lns||t===hoverT) tags(c,x,y,t)}
+      for(const t of targets){ if(!established(t))continue; const p=trkGeom(t); if(p.r>radar.rng)continue; const x=ax(p.az),y=ry(p.r);
+        if(t.rank>8&&t!==radar.lns){txt(c,'+',x,y-4,{a:'center',s:15});continue}
+        hafu(c,x,y,t,t===radar.lns); if(t===radar.lns||t===hoverT) tags(c,x,y,t)}
     }
     if(!radar.stt){ // TDC
       const x=ax(cursor.az),y=SY1-cursor.f*SW,R=cursor.f*radar.rng,[lo,hi]=cover();
@@ -512,7 +517,7 @@ function drawFcr(){
     for(const b of bricks){ if(b.r>radar.rng)continue; c.globalAlpha=clamp(1-(time-b.t)/8,.12,1);c.fillStyle=C.crt;c.fillRect(ax(b.az)-4,ry(b.r)-4,8,8)}
     c.globalAlpha=1;
     const t=radar.lns,p=t&&dispPos(t); if(p&&p.r<=radar.rng) fcrSym(c,ax(p.az),ry(p.r),t,true,true);
-  }else for(const t of targets){const p=dispPos(t); if(!p||p.r>radar.rng)continue; fcrSym(c,ax(p.az),ry(p.r),t,t===radar.lns,t===radar.lns||t===hoverT)}
+  }else for(const t of targets){const p=dispPos(t); if(!p||p.r>radar.rng)continue; if(!established(t)&&t!==radar.lns){c.fillStyle=C.crt;c.fillRect(ax(p.az)-4,ry(p.r)-4,8,8);continue} fcrSym(c,ax(p.az),ry(p.r),t,t===radar.lns,t===radar.lns||t===hoverT)}
   if(!radar.stt&&!acm){
     const x=ax(cursor.az),y=SY1-cursor.f*SW,R=cursor.f*radar.rng,[lo,hi]=cover();
     c.strokeStyle=hoverT?C.amber:C.crt;c.lineWidth=3;c.beginPath();c.moveTo(x-8,y-12);c.lineTo(x-8,y+12);c.moveTo(x+8,y-12);c.lineTo(x+8,y+12);c.stroke();
@@ -601,7 +606,7 @@ function drawMap(){
   else{const cc=scanC();fan(cc-half(),cc+half(),R*1.25,.1);fan(radar.antAz-1.65,radar.antAz+1.65,R*1.25,.55)}
   // what the radar believes
   if(!radar.stt&&!radar.acm){c.strokeStyle=C.crt;c.fillStyle=C.crt;c.lineWidth=1.2;
-    for(const t of targets){const p=dispPos(t); if(!p)continue; const [x,y]=ray(p.az,p.r); c.globalAlpha=radar.mode==='TWS'?1:clamp(1-(time-p.t)/8,.2,1); c.strokeRect(x-6,y-6,12,12)} c.globalAlpha=1}
+    for(const t of targets){const p=dispPos(t); if(!p)continue; const [x,y]=ray(p.az,p.r); c.globalAlpha=p.t==null?1:clamp(1-(time-p.t)/8,.2,1); c.strokeRect(x-6,y-6,12,12)} c.globalAlpha=1}
   for(const t of targets){const [x,y]=w2m(t.x,t.y),T=TYPES[t.type],col=T.side==='hostile'?C.hos:C.fri,[st,ok]=statusOf(t);
     if(x<-20||x>MW+20||y<-20||y>MH+20)continue;
     const a=(t.hdg-own.hdg)*D2R,len=t.spd/60*s*.5; c.strokeStyle=col;c.lineWidth=1;c.beginPath();c.moveTo(x,y);c.lineTo(x+Math.sin(a)*len,y-Math.cos(a)*len);c.stroke();
@@ -619,9 +624,9 @@ function drawMap(){
 /* ---------- lessons ---------- */
 const L=[
  {title:'The scope is not a map',
-  text:'A MiG-29 is 30 miles out, coming at you. On the radar page, left-right is azimuth off your nose and bottom-to-top is range. The vertical line is the antenna sweeping. Each pass over the MiG leaves a brick that then goes stale. Compare the brick with the live aircraft in the top-down view.',
-  goal:'Slew the TDC (the two short bars) onto the brick: move the mouse over the radar display, or use the arrow keys. It turns amber when it is on a contact.',
-  after:'With the cursor over a brick the radar shows its altitude in thousands of feet on the left and Mach on the right. The Hornet calls this latent track-while-scan.',
+  text:'A MiG-29 is 30 miles out, coming at you. On the radar page, left-right is azimuth off your nose and bottom-to-top is range. The vertical line is the antenna sweeping. Each pass over the MiG leaves a brick, a raw hit that then goes stale. After a second hit the radar has a trackfile and draws a HAFU symbol over it, which it keeps moving between sweeps. Compare both with the live aircraft in the top-down view.',
+  goal:'Slew the TDC (the two short bars) onto the contact: move the mouse over the radar display, or use the arrow keys. It turns amber when it is on a contact.',
+  after:'With the cursor on a track the radar shows its Mach on the left and its altitude in thousands of feet on the right. The number inside the symbol is the track\'s rank.',
   f16:{text:'A MiG-29 is 30 miles out, coming at you. On the FCR page, left-right is azimuth off your nose and bottom-to-top is range. The small T sliding along the bottom edge is the antenna. Each pass over the MiG leaves a white square that then goes stale. Compare it with the live aircraft in the top-down view.',
     goal:'Slew the cursor (the two short bars) onto the square: move the mouse over the display, or use the arrow keys. It turns amber when it is on a contact.',
     after:'The cursor is how you tell the radar which return you mean. In search the F-16 shows only the square: no altitude, no heading. You get those by bugging it.'},
@@ -640,14 +645,14 @@ const L=[
   f16:{goal:'Range to 80 (▲, top of the left edge), azimuth to A3 or A1 (third button down on the left), then slide the cursor out to the right. In the F-16 a narrowed scan follows the cursor.'},
   setup(){own.alt=25000;mk('bomber',45,60,28000,'hot')}, check:()=>radar.rng>=80&&radar.azW<=60&&time-targets[0].lastHit<1.5},
  {title:'Designate, then lock',
-  text:'Depressing the TDC on a brick makes it your L&S, the launch and steering target. The HUD now boxes it. Depressing again commands single target track: the antenna stops searching and stares at him.',
-  goal:'Move the mouse over the radar display so the TDC (two short bars) sits on a brick. It turns amber when it has one. Click once to designate, click again to lock. Keyboard: arrow keys slew, Enter depresses.',
+  text:'Depressing the TDC on a trackfile makes it your L&S, the launch and steering target. The HUD now boxes it. Depressing again commands single target track: the antenna stops searching and stares at him.',
+  goal:'Move the mouse over the radar display so the TDC (two short bars) sits on a HAFU. It turns amber when it has one. Click once to designate, click again to lock. Keyboard: arrow keys slew, Enter depresses.',
   after:'STT gives closure (Vc) and a solid track, at a price. Look at the table: every other contact is now invisible to you, and in the real world his radar warning receiver is screaming.',
   f16:{text:'TMS up on a search return bugs it: the radar keeps scanning but spends extra time on that one target, and the HUD boxes it. The F-16 calls this situation awareness mode. TMS up again commands single target track: the antenna stops searching and stares at him.',
     goal:'Put the cursor on a square (it turns amber). Click once to bug it, click again to lock. Keyboard: arrow keys slew, Enter is TMS up.'},
   setup(){mk('fighter',-10,32,23000,'hot');mk('fighter',25,36,19000,'flank')}, check:()=>!!radar.stt},
  {title:'Track while scan',
-  text:'TWS keeps a track file on everything it sees, so every contact gets a symbol with a heading stem. The cost is a smaller scan: 2 bars at 80°, 4 at 40°, 6 at 20°. With an L&S the scan follows it automatically.',
+  text:'RWS builds trackfiles as a by-product of searching. TWS is built around them: it keeps them fresh enough to engage more than one target. The cost is a smaller scan: 2 bars at 80°, 4 at 40°, 6 at 20°. With an L&S the scan follows it automatically.',
   goal:'Switch to TWS (top-left button, or M), designate a contact, then interrogate it with IFF.',
   after:'A friendly reply turns the staple into a half circle. No reply means only that: no reply. Try the others.',
   f16:{text:'TWS keeps a track file on everything it sees, so every contact gets a hollow square with a heading stem. The cost is a smaller scan: about ±25° with three bars, ±10° with four. With a bugged target the scan follows it automatically.',
@@ -770,9 +775,9 @@ const AIRCRAFT={
   ui:{elevH:'Radar elevation wheel',elevNote:'The TDC is on the throttle too: the mouse over the display stands in for it.',scsH:'Sensor control switch',scsNote:'Forward, left and aft pick the ACM mode. Pressing it in interrogates.',undesH:'Undesignate button',bUndes:'Undesignate',undesNote:'The same button as nosewheel steering. Breaks a lock, then leaves ACM.'},
   read:['<b>It is a B-scope, not a map.</b> Left to right is azimuth off your nose (±70°). Bottom to top is range. Two jets side by side at 40 nm look far apart; the same two at 5 nm look just as far apart.',
    '<b>B-sweep:</b> the vertical line is where the antenna is pointing right now.',
-   '<b>Brick:</b> one radar hit. It stays where it was painted and fades until the next sweep refreshes it.',
+   '<b>Brick:</b> one raw radar hit. It stays where it was painted and fades until the next sweep refreshes it.',
    '<b>TDC cursor:</b> the two short bars. The numbers beside it are the top and bottom of the scan, in thousands of feet, at the cursor\'s range.',
-   '<b>HAFU:</b> the track symbol. A staple is unknown, a half circle is friendly. The star marks your L&amp;S, the launch and steering target. The stem shows its heading relative to yours.'],
+   '<b>HAFU:</b> the trackfile symbol, drawn once the radar has hit a contact twice and moved between sweeps on the track\'s estimated course. A staple is unknown, a half circle is friendly. The number inside is the track\'s rank; past the top eight a track is only a +. The star marks your L&amp;S, the launch and steering target. The stem shows its heading relative to yours. On the L&amp;S or under the cursor, Mach is on the left and altitude in thousands on the right.'],
   where:[['RWS / TWS, bars, range scale, azimuth width, erase','Pushbuttons around the DDI showing the radar page','The grey buttons on the bezel','Left/Right DDI PB 1–20'],
    ['Slew the cursor, designate, command STT','<b>Throttle</b>: the TDC, a small thumb joystick on the front of the right throttle that also presses in','Mouse over the display, click','Throttle Designator Controller (slew and Depress)'],
    ['Tilt the antenna up and down','<b>Throttle</b>: the radar elevation wheel on the left throttle','Elevation slider, <kbd>W</kbd> <kbd>S</kbd>','Radar Elevation Control'],
@@ -780,7 +785,7 @@ const AIRCRAFT={
    ['Give the TDC to the radar page','<b>Stick</b>: bump the sensor control switch toward the display the radar is on. A diamond appears in its top-right corner.','Not needed here','Sensor Control Switch Left / Right'],
    ['IFF interrogate','<b>Stick</b>: press the sensor control switch in, with the cursor on the contact','IFF button, <kbd>I</kbd>','Sensor Control Switch Depress'],
    ['Break lock, drop the L&amp;S, leave ACM','<b>Stick</b>: the undesignate button on the front of the grip, which is nosewheel steering on the ground','Undesignate, <kbd>U</kbd>','Undesignate / Nose Wheel Steer Switch']],
-  simp:'This is a teaching model of the APG-73 as DCS presents it, not a copy of it.'+CAVEAT+' Pushbutton positions follow the real page where I am confident of them (mode, bars, range, azimuth); IFF and ACM are on the panel below the display because in the jet they live on the stick. The cockpit locations and DCS control names above are from memory, so check them against your bindings screen. Missiles, datalink, the SA page and jamming are not modelled.'},
+  simp:'This is a teaching model of the APG-73 as DCS presents it, not a copy of it.'+CAVEAT+' Every radar trackfile is drawn as a HAFU, which is what the jet shows with datalink contributing or with the LTWS display option set that way; in the other LTWS setting, radar-only tracks stay as bricks until the cursor is on them. Tracks are ranked by range only, and there is no hostile symbol because nothing here makes a positive hostile ID. Pushbutton positions follow the real page where I am confident of them (mode, bars, range, azimuth); IFF and ACM are on the panel below the display because in the jet they live on the stick. The cockpit locations and DCS control names above are from memory, so check them against your bindings screen. Missiles, datalink, the SA page and jamming are not modelled.'},
  f16:{id:'f16',h1:'Viper Radar Trainer',cap:'Left MFD · FCR page',draw:drawFcr,gimbal:60,follow:true,
   azs:[20,60,120],bars:[1,2,4],twsBars:[2,3,4],twsMax:{2:50,3:50,4:20},twsDef:3,
   t:{lns:'bugged target',set:'Target bugged. TMS up again for STT.'},
@@ -802,7 +807,7 @@ const AIRCRAFT={
    ['IFF interrogate','<b>Stick</b>: TMS left','IFF button, <kbd>I</kbd>','TMS Switch Left'],
    ['Drop the bug, break lock','<b>Stick</b>: TMS down','TMS down button, <kbd>U</kbd>','TMS Switch Down'],
    ['Make the FCR the sensor of interest','<b>Stick</b>: DMS down moves the sensor of interest between the two MFDs','Not needed here','DMS Switch Down']],
-  simp:'This is a teaching model of the APG-68 as DCS presents it, not a copy of it.'+CAVEAT+' Button positions follow the real FCR page where I am confident of them (submode, range, azimuth, bars). TWS scan widths, ACM pattern sizes, cockpit locations and DCS control names are from memory, so check them against the manual and your bindings screen. The other search submodes, the HSD, datalink, missiles and jamming are not modelled.'}
+  simp:'This is a teaching model of the APG-68 as DCS presents it, not a copy of it.'+CAVEAT+' In RWS returns stay as search squares until you bug one; in TWS a return becomes a track after its second hit, and the separate step of promoting tracks to system tracks is skipped. Button positions follow the real FCR page where I am confident of them (submode, range, azimuth, bars). TWS scan widths, ACM pattern sizes, cockpit locations and DCS control names are from memory, so check them against the manual and your bindings screen. The other search submodes, the HSD, datalink, missiles and jamming are not modelled.'}
 };
 function setAC(id){
   AC=AIRCRAFT[id]||AIRCRAFT.hornet;GIMBAL=AC.gimbal;AZS=AC.azs;TWSMAX=AC.twsMax;
@@ -823,7 +828,7 @@ let last=performance.now(),uiT=0;
 function frame(now){
   const dt=Math.min(.05,(now-last)/1000);last=now;
   if(!paused)step(dt);
-  hoverT=pick();
+  rankTracks();hoverT=pick();
   AC.draw();drawHud();drawSide();drawMap();checkLesson();
   if(now-uiT>250){uiT=now;slowUi()}
   requestAnimationFrame(frame);
